@@ -16,3 +16,7 @@ cards_sonnet.jsonl
 
 __pycache__/
 .venv/
+
+# Το φύλλο αξιολόγησης περιέχει κείμενο ΑΣΡ από το gated dataset (στήλη «Πρωτότυπο κείμενο»).
+# Ξαναφτιάχνεται τοπικά με: python evaluation/make_sheet.py
+evaluation/aksiologisi.xlsx

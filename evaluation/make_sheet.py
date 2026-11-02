@@ -2,11 +2,16 @@
 
 Δείγμα: 20 τυχαίες κάρτες με σταθερό seed=42, μία ανά υπουργείο (ποικιλία).
 Μία γραμμή ανά κάρτα και πεδίο: Ζήτημα, Ωφελούμενοι, Στόχοι, Κόστος -> 80 γραμμές.
+Φύλλο «Αυτόματος έλεγχος»: πόσα τεκμήρια βρίσκονται αυτούσια στο κείμενο που είδε το μοντέλο.
+
+ΠΡΟΣΟΧΗ: περιέχει κείμενο ΑΣΡ από το gated dataset -> το xlsx ΔΕΝ ανεβαίνει στο GitHub.
 
 Χρήση:  python evaluation/make_sheet.py
 ΠΡΟΣΟΧΗ: αντικαθιστά το aksiologisi.xlsx· μην το ξανατρέξετε αφού αρχίσετε να βαθμολογείτε.
 """
 import json
+import re
+import unicodedata
 from pathlib import Path
 
 import pandas as pd
@@ -32,9 +37,13 @@ WRAP = Alignment(wrap_text=True, vertical='top')
 CENTER = Alignment(horizontal='center', vertical='top', wrap_text=True)
 
 COLS = ['Α/Α κάρτας', 'Τίτλος', 'Σύνδεσμος PDF ΑΣΡ', 'Πεδίο', 'Τι εξήγαγε το LLM',
-        'Πηγή/τεκμήρια', 'Βαθμός', 'Πλήθος στοιχείων', 'Σωστά στοιχεία',
+        'Πηγή/τεκμήρια', 'Πρωτότυπο κείμενο', 'Βαθμός', 'Πλήθος στοιχείων', 'Σωστά στοιχεία',
         'Λείπει κάτι σημαντικό;', 'Σχόλιο', 'law_id']
-WIDTHS = [9, 34, 14, 13, 60, 60, 16, 11, 11, 13, 30, 14]
+WIDTHS = [9, 30, 12, 13, 55, 50, 90, 16, 11, 11, 13, 30, 14]
+# θέσεις στηλών (1 = A)
+C_FIELD, C_TEXT, C_EV, C_ORIG = 4, 5, 6, 7
+C_GRADE, C_COUNT, C_OK, C_MISS, C_NOTE, C_ID = 8, 9, 10, 11, 12, 13
+EXCEL_MAX = 32_767   # όριο χαρακτήρων ανά κελί στο Excel
 FIELDS = ['Ζήτημα', 'Ωφελούμενοι', 'Στόχοι', 'Κόστος']
 
 
@@ -43,7 +52,8 @@ def sample_cards() -> pd.DataFrame:
         cards = pd.DataFrame([json.loads(l) for l in f if l.strip()])
     meta = pd.read_parquet(ROOT / 'data' / 'cards_public.parquet',
                            columns=['law_id', 'Τίτλος', 'Υπουργείο', 'Ανάλυση_Συνεπειών_Ρύθμισης'])
-    df = meta.merge(cards[['law_id', 'card']], on='law_id')
+    src = pd.read_parquet(ROOT / 'cores.parquet', columns=['law_id', 'core', 'cost'])
+    df = meta.merge(cards[['law_id', 'card']], on='law_id').merge(src, on='law_id', how='left')
     df = df.sort_values('law_id').sample(frac=1, random_state=SEED).reset_index(drop=True)
     # ποικιλία: πρώτα μία κάρτα από κάθε υπουργείο, με τη σειρά της τυχαίας ανακατάταξης
     df['_round'] = df.groupby('Υπουργείο').cumcount()
@@ -80,6 +90,34 @@ def style_header(ws, row, ncols):
         cell.border = BORDER
 
 
+def text_of(v) -> str:
+    return v if isinstance(v, str) else ''   # τα κενά στο parquet έρχονται ως NaN
+
+
+def original_text(row) -> str:
+    """Το κείμενο που είδε το μοντέλο: ερωτήσεις 1-8 της ΑΣΡ και απόσπασμα κόστους."""
+    cost = text_of(row['cost']) or '(δεν βρέθηκε κείμενο για το κόστος)'
+    # ΟΧΙ «=» στην αρχή: το Excel θα το διάβαζε ως τύπο
+    tail = '\n\n▌ ΚΟΣΤΟΣ\n' + cost
+    core = text_of(row['core'])
+    room = EXCEL_MAX - len(tail) - 120
+    if len(core) > room:
+        core = core[:room] + '\n\n[… το κείμενο κόπηκε εδώ λόγω του ορίου του Excel· το υπόλοιπο στο PDF]'
+    return '▌ ΕΡΩΤΗΣΕΙΣ 1-8 ΤΗΣ ΑΣΡ\n' + core + tail
+
+
+def as_text(cell):
+    """Κείμενο που αρχίζει με «=» να μένει κείμενο, όχι τύπος."""
+    if isinstance(cell.value, str) and cell.value.startswith('='):
+        cell.data_type = 's'
+    return cell
+
+
+def row_height(*texts, width=55):
+    lines = sum(max(1, len(line) // width + 1) for t in texts for line in str(t or '').split('\n'))
+    return min(409, max(30, 13 * lines))
+
+
 def build_eval(ws, df):
     ws.append(COLS)
     style_header(ws, 1, len(COLS))
@@ -100,34 +138,38 @@ def build_eval(ws, df):
         card = row['card']
         band = BAND_FILL if i % 2 else None
         for field, text, ev, count in field_rows(card):
-            values = [i + 1, row['Τίτλος'], 'Άνοιγμα PDF', field, text, ev,
+            orig = original_text(row) if field == 'Ζήτημα' else '↑ βλ. γραμμή «Ζήτημα» της ίδιας κάρτας'
+            values = [i + 1, row['Τίτλος'], 'Άνοιγμα PDF', field, text, ev, orig,
                       None, count, None, None, None, row['law_id']]
             for col, v in enumerate(values, 1):
-                cell = ws.cell(r, col, v)
+                cell = as_text(ws.cell(r, col, v))
                 cell.font = Font(name=FONT, size=10)
                 cell.alignment = WRAP
                 cell.border = BORDER
                 if band:
                     cell.fill = band
             ws.cell(r, 1).alignment = CENTER
-            ws.cell(r, 4).font = Font(name=FONT, size=10, bold=True)
-            ws.cell(r, 6).font = Font(name=FONT, size=9, italic=True, color='595959')
-            ws.cell(r, 12).font = Font(name=FONT, size=8, color='808080')
+            ws.cell(r, C_FIELD).font = Font(name=FONT, size=10, bold=True)
+            ws.cell(r, C_EV).font = Font(name=FONT, size=9, italic=True, color='595959')
+            ws.cell(r, C_ORIG).font = Font(name=FONT, size=9, color='404040' if field == 'Ζήτημα' else '999999')
+            ws.cell(r, C_ID).font = Font(name=FONT, size=8, color='808080')
             link = ws.cell(r, 3)
             link.hyperlink = row['Ανάλυση_Συνεπειών_Ρύθμισης']
             link.font = Font(name=FONT, size=10, color='0563C1', underline='single')
-            ws.cell(r, 8).alignment = CENTER
+            ws.cell(r, C_COUNT).alignment = CENTER
+            # η γραμμή του Ζητήματος ψηλή, για να διαβάζεται το πρωτότυπο κείμενο
+            ws.row_dimensions[r].height = 409 if field == 'Ζήτημα' else row_height(text, ev)
 
             if count is None:   # Ζήτημα / Κόστος: βαθμός
-                inputs, na = [7], [8, 9, 10]
-                dv_grade.add(ws.cell(r, 7))
+                inputs, na = [C_GRADE], [C_COUNT, C_OK, C_MISS]
+                dv_grade.add(ws.cell(r, C_GRADE))
             else:               # λίστες: σωστά στοιχεία + ελλείψεις
-                inputs, na = [9, 10], [7]
-                dv_count.add(ws.cell(r, 9))
-                dv_yesno.add(ws.cell(r, 10))
-            for col in inputs + [11]:
+                inputs, na = [C_OK, C_MISS], [C_GRADE]
+                dv_count.add(ws.cell(r, C_OK))
+                dv_yesno.add(ws.cell(r, C_MISS))
+            for col in inputs + [C_NOTE]:
                 ws.cell(r, col).fill = INPUT_FILL
-                ws.cell(r, col).alignment = CENTER if col != 11 else WRAP
+                ws.cell(r, col).alignment = CENTER if col != C_NOTE else WRAP
             for col in na:
                 ws.cell(r, col).fill = NA_FILL
             r += 1
@@ -135,10 +177,113 @@ def build_eval(ws, df):
     for col, w in enumerate(WIDTHS, 1):
         ws.column_dimensions[ws.cell(1, col).column_letter].width = w
     ws.freeze_panes = 'E2'
-    ws.auto_filter.ref = f'A1:L{r - 1}'
-    ws.cell(1, 9).comment = Comment('Πόσα από τα αριθμημένα στοιχεία είναι σωστά (0 έως «Πλήθος στοιχείων»).',
-                                    'Κάρτα Νόμου')
+    ws.auto_filter.ref = f'A1:{ws.cell(1, len(COLS)).column_letter}{r - 1}'
+    ws.cell(1, C_OK).comment = Comment('Πόσα από τα αριθμημένα στοιχεία είναι σωστά (0 έως «Πλήθος στοιχείων»).',
+                                       'Κάρτα Νόμου')
+    ws.cell(1, C_ORIG).comment = Comment('Το κείμενο που διάβασε το μοντέλο (ερωτήσεις 1-8 της ΑΣΡ και '
+                                         'απόσπασμα κόστους). Υπάρχει μόνο στη γραμμή «Ζήτημα» κάθε κάρτας. '
+                                         'Ctrl+F για να βρείτε ένα τεκμήριο.', 'Κάρτα Νόμου')
     return r - 1
+
+
+def plain(s: str) -> str:
+    """Πεζά, χωρίς τόνους, χωρίς κενά και στίξη: μένουν μόνο γράμματα και ψηφία."""
+    s = unicodedata.normalize('NFD', str(s).lower()).replace('ς', 'σ')
+    return ''.join(ch for ch in s if ch.isalnum() and unicodedata.category(ch) != 'Mn')
+
+
+ELLIPSIS = re.compile(r'\[?(?:…|\.\.\.)\]?')
+
+
+def found(evidence: str, haystack: str) -> bool:
+    """Αυτούσιο = κάθε κομμάτι του τεκμηρίου (χωρισμένο με «…») υπάρχει στο κείμενο."""
+    parts = [plain(p) for p in ELLIPSIS.split(evidence)]
+    parts = [p for p in parts if len(p) >= 3]
+    return bool(parts) and all(p in haystack for p in parts)
+
+
+def word_share(evidence: str, haystack: str) -> float:
+    """Τι ποσοστό των λέξεων του τεκμηρίου υπάρχει στο κείμενο (ξεχωρίζει θόρυβο OCR από επινόηση)."""
+    words = [w for w in (plain(x) for x in re.split(r'\s+', evidence)) if len(w) >= 2]
+    return sum(w in haystack for w in words) / len(words) if words else 0.0
+
+
+def build_autocheck(ws, df):
+    ws.cell(1, 1, 'Αυτόματος έλεγχος τεκμηρίων').font = Font(name=FONT, bold=True, size=14)
+    ws.cell(2, 1, 'Πόσα τεκμήρια («Πηγή») βρίσκονται αυτούσια στο κείμενο που διάβασε το μοντέλο, '
+                  'αγνοώντας κενά, στίξη, τόνους και κεφαλαία. Αν το τεκμήριο έχει «…», πρέπει να '
+                  'βρεθεί κάθε κομμάτι του. Υπολογίζεται αυτόματα· δεν συμπληρώνεται.').font = \
+        Font(name=FONT, italic=True, size=9, color='595959')
+    ws.merge_cells('A2:E2')
+    ws.row_dimensions[2].height = 36
+    ws.cell(2, 1).alignment = WRAP
+
+    rows = []
+    for i, row in df.iterrows():
+        hay = plain(text_of(row['core']) + ' ' + text_of(row['cost']))
+        card = row['card']
+        cost = card['cost'] if isinstance(card['cost'], dict) else {}
+        items = [('Ζήτημα', 1, card.get('issue_evidence', ''))]
+        items += [('Ωφελούμενοι', k, b.get('evidence', '')) for k, b in enumerate(card['beneficiaries'], 1)]
+        items += [('Στόχοι', k, g.get('evidence', '')) for k, g in enumerate(card['goals'], 1)]
+        items += [('Κόστος', 1, cost.get('evidence', ''))]
+        for field, k, ev in items:
+            if ev and ev.strip():   # κενό τεκμήριο (π.χ. κόστος που δεν αναφέρεται) δεν μετρά
+                rows.append((i + 1, field, k, ev, 'Ναι' if found(ev, hay) else 'Όχι',
+                             word_share(ev, hay)))
+
+    top = 14                      # αρχή του αναλυτικού πίνακα
+    last = top + len(rows)
+    FLD, RES = f'$B${top + 1}:$B${last}', f'$E${top + 1}:$E${last}'
+
+    hdr_fill = PatternFill('solid', fgColor='D9E1F2')
+    for col, h in enumerate(['Πεδίο', 'Τεκμήρια', 'Βρέθηκαν αυτούσια', '% αυτούσια'], 1):
+        c = ws.cell(4, col, h)
+        c.font, c.fill, c.border, c.alignment = Font(name=FONT, bold=True, size=10), hdr_fill, BORDER, CENTER
+    for r, field in enumerate(FIELDS + ['Σύνολο'], 5):
+        ws.cell(r, 1, field)
+        if field == 'Σύνολο':
+            ws.cell(r, 2, '=SUM(B5:B8)')
+            ws.cell(r, 3, '=SUM(C5:C8)')
+        else:
+            ws.cell(r, 2, f'=COUNTIF({FLD},"{field}")')
+            ws.cell(r, 3, f'=COUNTIFS({FLD},"{field}",{RES},"Ναι")')
+        ws.cell(r, 4, f'=IF(B{r}=0,"",C{r}/B{r})').number_format = '0.0%'
+        for col in range(1, 5):
+            c = ws.cell(r, col)
+            c.border = BORDER
+            c.font = Font(name=FONT, size=10, bold=(field == 'Σύνολο'))
+            c.alignment = CENTER if col > 1 else WRAP
+    ws.cell(11, 1, 'Σημείωση: ένα «Όχι» δεν σημαίνει απαραίτητα λάθος. Μπορεί το μοντέλο να άλλαξε '
+                   'λίγο τη διατύπωση ή να υπάρχει θόρυβος από τη μετατροπή του PDF (π.χ. αριθμός '
+                   'σελίδας, κομμένη λέξη ή λάθος OCR μέσα στο απόσπασμα). Η στήλη «Λέξεις που '
+                   'βρέθηκαν» βοηθά: κοντά στο 100% = μικρή απόκλιση· χαμηλό = το τεκμήριο ίσως '
+                   'δεν υπάρχει στο κείμενο. Αξίζει να ελεγχθούν με το μάτι.').font = \
+        Font(name=FONT, size=9, color='404040')
+    ws.merge_cells('A11:F12')
+    ws.cell(11, 1).alignment = WRAP
+
+    for col, h in enumerate(['Α/Α κάρτας', 'Πεδίο', 'Στοιχείο αρ.', 'Τεκμήριο', 'Βρέθηκε αυτούσιο;',
+                             'Λέξεις που βρέθηκαν'], 1):
+        c = ws.cell(top, col, h)
+        c.font = Font(name=FONT, bold=True, color='FFFFFF')
+        c.fill, c.border, c.alignment = HEAD_FILL, BORDER, CENTER
+    no_fill = PatternFill('solid', fgColor='FCE4D6')
+    for r, vals in enumerate(rows, top + 1):
+        for col, v in enumerate(vals, 1):
+            c = as_text(ws.cell(r, col, v))
+            c.font = Font(name=FONT, size=10)
+            c.border = BORDER
+            c.alignment = WRAP if col == 4 else CENTER
+        ws.cell(r, 6).number_format = '0%'
+        if vals[4] == 'Όχι':
+            ws.cell(r, 5).fill = no_fill
+            ws.cell(r, 5).font = Font(name=FONT, size=10, bold=True, color='C00000')
+    for col, w in zip('ABCDEF', [16, 16, 18, 90, 16, 14]):
+        ws.column_dimensions[col].width = w
+    ws.auto_filter.ref = f'A{top}:F{last}'
+    ws.freeze_panes = f'A{top + 1}'
+    return rows
 
 
 def build_guide(ws):
@@ -149,9 +294,13 @@ def build_guide(ws):
         (None, None),
         ('Τι αξιολογούμε', f'{N} τυχαίες κάρτες (seed={SEED}, μία ανά υπουργείο). Για κάθε κάρτα '
                            'ελέγχουμε 4 πεδία: Ζήτημα, Ωφελούμενοι, Στόχοι, Κόστος.'),
-        ('Πώς', 'Ανοίξτε το PDF της ΑΣΡ (στήλη «Σύνδεσμος PDF ΑΣΡ») και συγκρίνετε με τη στήλη '
-                '«Τι εξήγαγε το LLM». Η στήλη «Πηγή/τεκμήρια» δείχνει το απόσπασμα που επικαλείται '
-                'το μοντέλο· με Ctrl+F στο PDF το βρίσκετε γρήγορα.'),
+        ('Πώς', 'Συγκρίνετε τη στήλη «Τι εξήγαγε το LLM» με το «Πρωτότυπο κείμενο» (στη γραμμή '
+                '«Ζήτημα» κάθε κάρτας: οι ερωτήσεις 1-8 της ΑΣΡ και το απόσπασμα κόστους, δηλαδή '
+                'ό,τι διάβασε το μοντέλο). Η στήλη «Πηγή/τεκμήρια» δείχνει το απόσπασμα που '
+                'επικαλείται το μοντέλο· με Ctrl+F το βρίσκετε γρήγορα. Για ολόκληρο το έγγραφο: '
+                '«Σύνδεσμος PDF ΑΣΡ».'),
+        ('Αυτόματος έλεγχος', 'Το φύλλο «Αυτόματος έλεγχος» δείχνει ποια τεκμήρια βρέθηκαν αυτούσια '
+                              'στο κείμενο. Τα «Όχι» αξίζει να τα κοιτάξετε πρώτα.'),
         ('Τι συμπληρώνω', 'ΜΟΝΟ τα κίτρινα κελιά. Τα γκρι δεν αφορούν το συγκεκριμένο πεδίο. '
                           'Τα αποτελέσματα υπολογίζονται μόνα τους στο φύλλο «Αποτελέσματα».'),
         (None, None),
@@ -184,15 +333,17 @@ def build_guide(ws):
         cb.font = Font(name=FONT, size=10)
         ca.alignment = cb.alignment = WRAP
     ws['A1'].font = Font(name=FONT, bold=True, size=14)
-    ws['A7'].font = Font(name=FONT, bold=True, size=12)
-    for r in (8, 9, 10):
+    ws['A8'].font = Font(name=FONT, bold=True, size=12)
+    for r in (9, 10, 11):
         ws.cell(r, 1).fill = INPUT_FILL
 
 
 def build_results(ws, last):
     def rng(col):
         return f'{REF}${col}$2:${col}${last}'
-    F, G, H, I, J = rng('D'), rng('G'), rng('H'), rng('I'), rng('J')
+    # F: Πεδίο, G: Βαθμός, H: Πλήθος, I: Σωστά, J: Λείπει κάτι (στο φύλλο «Αξιολόγηση»)
+    letter = lambda c: ws.cell(1, c).column_letter
+    F, G, H, I, J = (rng(letter(c)) for c in (C_FIELD, C_GRADE, C_COUNT, C_OK, C_MISS))
 
     def put(cell, value, bold=False, fmt=None):
         c = ws[cell]
@@ -283,10 +434,15 @@ def main():
     last = build_eval(ws, df)
     build_guide(wb.create_sheet('Οδηγίες'))
     build_results(wb.create_sheet('Αποτελέσματα'), last)
+    checks = build_autocheck(wb.create_sheet('Αυτόματος έλεγχος'), df)
     OUT.parent.mkdir(exist_ok=True)
     wb.save(OUT)
     print(f'{len(df)} κάρτες, {last - 1} γραμμές -> {OUT.relative_to(ROOT)}')
     print('υπουργεία:', df['Υπουργείο'].nunique())
+    for f in FIELDS:
+        n = [c for c in checks if c[1] == f]
+        print(f'{f}: {sum(c[4] == "Ναι" for c in n)}/{len(n)} τεκμήρια αυτούσια')
+    print(f'Σύνολο: {sum(c[4] == "Ναι" for c in checks)}/{len(checks)}')
 
 
 if __name__ == '__main__':
