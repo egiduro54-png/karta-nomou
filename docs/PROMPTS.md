@@ -1,0 +1,20 @@
+# Βασικά prompts προς τον coding agent
+
+Καταγραφή των κύριων οδηγιών που δόθηκαν στο Claude (claude.ai και Claude Code στο VS Code)
+κατά την ανάπτυξη. Παραδοτέο (β) της εργασίας.
+
+| # | Ημερομηνία | Εργαλείο | Prompt (σύνοψη) | Αποτέλεσμα |
+|---|---|---|---|---|
+| 1 | 19/10/2026 | claude.ai | Αξιολόγηση του θέματος 5 και του dataset | Εντοπισμός σταθερού προτύπου ΑΣΡ, κινδύνων (μήκος κειμένων, θόρυβος PDF, κόστος) |
+| 2 | 19/10/2026 | claude.ai | Εξερεύνηση του dataset (489 εγγραφές) | Στατιστικά ανά τύπο/υπουργείο, 20 χαλασμένες εγγραφές |
+| 3 | 19/10/2026 | claude.ai | Αποκοπή των χρήσιμων τμημάτων της ΑΣΡ | `extract_core.py`: ερωτήσεις 1-8 σε 469/489, σχόλια κόστους |
+| 4 | 19/10/2026 | claude.ai | Script εξαγωγής κάρτας με Claude API | `extract_cards.py`: σταθερό JSON schema με τεκμήρια ανά πεδίο |
+| 5 | 02/11/2026 | Claude Code | «Διάβασε το CLAUDE.md. Εγκατάστησε τα requirements, τρέξε το extract_core.py στο data/bills.parquet και πες μου τι βρήκε.» | Εγκατάσταση πακέτων· `cores.parquet`: core 469/489, cost 255/489, διάμεσο μήκος core 8.727 χαρακτήρες |
+| 6 | 02/11/2026 | Claude Code | Διόρθωση σφάλματος 400 «tool_choice: type tool and any are not supported» με το claude-sonnet-5-5: `tool_choice` auto, `strict` στο εργαλείο, σφάλμα αν λείπει η κλήση, ρητή οδηγία στο prompt | `extract_cards.py`: `tool_choice={"type": "auto"}`, `strict: True` + `additionalProperties: False` σε όλα τα objects, `RuntimeError` χωρίς tool_use (ξαναδοκιμάζεται στο επόμενο τρέξιμο), νέα τελευταία γραμμή στο prompt |
+| 7 | 02/11/2026 | Claude Code | «Στο extract_cards.py άλλαξε το max_tokens από 2000 σε 8000, γιατί κάποιες κάρτες κόβονται (stop_reason=max_tokens).» | `extract_cards.py`: `max_tokens=8000` |
+| 8 | 02/11/2026 | Claude Code | Τρεις διορθώσεις: σφάλμα αν `stop_reason` ≠ `tool_use` (για να μη σώζονται κομμένες κάρτες), κανόνες 6 (κόστος συνολικά για το νομοσχέδιο, «Δεν αναφέρεται» αν λείπει) και 7 (χωρίς αναφορές στο «κείμενο που δόθηκε»), έλεγχος `DEFAULT_MODEL` | `extract_cards.py`: `RuntimeError` αν `stop_reason` ≠ `tool_use`· κανόνες 6-7 στο `SYSTEM`· το `DEFAULT_MODEL` ήταν ήδη `claude-sonnet-5-5` |
+| 9 | 02/11/2026 | Claude Code | Απόφαση καθηγητή: εκτός οι διεθνείς συμβάσεις. Σταθερά `EXCLUDE_TYPES` στο `extract_core.py`, νέο τρέξιμο, ενημέρωση CLAUDE.md | `EXCLUDE_TYPES = ["Διεθνής Σύμβαση"]`· μένουν 318/489· core 301/318, cost 164/318, διάμεσο μήκος core 13.560 χαρακτήρες |
+| 10 | 02/11/2026 | Claude Code | Script που ενώνει κάρτες + μεταδεδομένα σε `data/cards_public.parquet` (χωρίς md_text/core/cost) | `build_public.py`: 300 κάρτες, ξεχωρίζει αρ. νόμου και ΦΕΚ από τη `Φάση_επεξεργασίας`, σώζει 2 κάρτες με κομμένο JSON κόστους (~850 KB) |
+| 11 | 02/11/2026 | Claude Code | Εφαρμογή Streamlit: φίλτρα υπουργείο/έτος/αναζήτηση, λίστα με κλικ, κάρτα με τεκμήρια και συνδέσμους Βουλής/PDF, σημείωση για αυτόματη παραγωγή, όλα στα ελληνικά | `app.py`: αναζήτηση χωρίς τόνους/κεφαλαία, πίνακας με επιλογή γραμμής, πηγή κάτω από κάθε στοιχείο σε μικρά γκρι· δοκιμάστηκε χωρίς σφάλματα σε όλες τις 300 κάρτες |
+| 12 | 02/11/2026 | Claude Code | «Αφαίρεσε από το cards.jsonl τις 2 κάρτες με κομμένο κόστος (κράτα αντίγραφο ασφαλείας), ώστε να ξαναγίνουν. Δώσε μου την εντολή με --ids για τα 3 νομοσχέδια.» | Αντίγραφο `cards_backup.jsonl` (300)· `cards.jsonl` 298· εντολή `--ids` για τις 2 + την κάρτα «ΑΡΓΟΣ» που έλειπε |
+| 13 | 02/11/2026 | Claude Code | Ανέβασμα στο GitHub: έλεγχος `.gitignore` (όχι dataset, cores, αντίγραφα, κλειδιά· ναι `data/cards_public.parquet`), `git init`, λίστα αρχείων πριν το commit, push στο main | `.gitignore` + `cards_backup.jsonl`, `cards_sonnet.jsonl`, `.env.*`· έλεγχος ότι δεν υπάρχει κλειδί σε αρχείο· πρώτο commit στο `main` |

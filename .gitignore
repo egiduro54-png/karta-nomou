@@ -1,0 +1,18 @@
+# Το dataset είναι gated: δεν ανεβαίνει στο GitHub
+data/bills.parquet
+data/cores.parquet
+*.parquet
+!data/cards_public.parquet
+
+# Αντίγραφα ασφαλείας και παλιές δοκιμαστικές κάρτες
+cards_backup.jsonl
+cards_sonnet.jsonl
+*.bak
+
+# Κλειδιά - ΠΟΤΕ στο GitHub
+.env
+.env.*
+.streamlit/secrets.toml
+
+__pycache__/
+.venv/
