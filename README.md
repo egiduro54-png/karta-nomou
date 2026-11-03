@@ -184,8 +184,9 @@ pip install -r requirements.txt           # η εφαρμογή (streamlit, pand
 pip install -r requirements-extract.txt   # τα scripts εξαγωγής και αξιολόγησης (+ anthropic, openpyxl)
 ```
 Υπάρχουν δύο αρχεία βιβλιοθηκών. Το `requirements.txt` το διαβάζει το Streamlit Community
-Cloud, γι' αυτό περιέχει μόνο ό,τι χρειάζεται η εφαρμογή, με κλειδωμένη την έκδοση του
-Streamlit. Αν θέλετε μόνο να τρέξετε την εφαρμογή τοπικά, αρκεί το πρώτο.
+Cloud, γι' αυτό περιέχει μόνο ό,τι χρειάζεται η εφαρμογή, με κλειδωμένες τις εκδόσεις του
+Streamlit και του pyarrow (η 26.0.1 έχει γνωστό segfault στο Streamlit Cloud). Αν θέλετε μόνο
+να τρέξετε την εφαρμογή τοπικά, αρκεί το πρώτο.
 
 **2. Dataset.** Συνδεθείτε στο Hugging Face, αποδεχτείτε τους όρους στη
 [σελίδα του dataset](https://huggingface.co/datasets/glossAPI/hellenic-parliament-legislative-work)

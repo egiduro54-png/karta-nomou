@@ -1,3 +1,4 @@
 streamlit==1.56.0
 pandas
-pyarrow
+# 26.0.1 έχει γνωστό segfault στο Streamlit Cloud
+pyarrow==24.0.0
