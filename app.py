@@ -35,10 +35,21 @@ def date_gr(d) -> str:
 
 @st.cache_data
 def load() -> pd.DataFrame:
+    """Διαβάζει και προετοιμάζει τα δεδομένα μία φορά· τα reruns παίρνουν το έτοιμο αποτέλεσμα."""
     df = pd.read_parquet(DATA)
+    df['card'] = df['card'].map(json.loads)
     df['Έτος'] = df['Ημερομηνία_κατάθεσης'].dt.year
+    df['Κατάθεση'] = df['Ημερομηνία_κατάθεσης'].map(date_gr)
     df['_search'] = (df['Τίτλος'] + ' ' + df['issue']).map(plain)
     return df.sort_values('Ημερομηνία_κατάθεσης', ascending=False).reset_index(drop=True)
+
+
+@st.cache_data
+def filter_options():
+    """Λίστα υπουργείων και εύρος ετών για τα φίλτρα."""
+    df = load()
+    return (sorted(df['Υπουργείο'].dropna().unique()),
+            int(df['Έτος'].min()), int(df['Έτος'].max()))
 
 
 def evidence(text: str):
@@ -47,7 +58,7 @@ def evidence(text: str):
 
 
 def show_card(row):
-    card = json.loads(row['card'])
+    card = row['card']
     st.subheader(esc(row['Τίτλος']))
 
     c1, c2, c3, c4 = st.columns(4)
@@ -109,13 +120,12 @@ if not DATA.exists():
     st.stop()
 
 df = load()
+all_ministries, y0, y1 = filter_options()
 
 with st.sidebar:
     st.header('Φίλτρα')
     query = st.text_input('Αναζήτηση', placeholder='λέξη στον τίτλο ή στο ζήτημα')
-    ministries = st.multiselect('Υπουργείο', sorted(df['Υπουργείο'].dropna().unique()),
-                                placeholder='Όλα τα υπουργεία')
-    y0, y1 = int(df['Έτος'].min()), int(df['Έτος'].max())
+    ministries = st.multiselect('Υπουργείο', all_ministries, placeholder='Όλα τα υπουργεία')
     years = st.slider('Έτος κατάθεσης', y0, y1, (y0, y1))
 
 mask = df['Έτος'].between(*years)
@@ -130,11 +140,7 @@ st.markdown(f'**Βρέθηκαν {len(res)} νομοσχέδια**' if len(res) 
 if res.empty:
     st.info('Κανένα νομοσχέδιο δεν ταιριάζει με τα φίλτρα. Δοκιμάστε κάτι πιο γενικό.')
 else:
-    table = pd.DataFrame({
-        'Τίτλος': res['Τίτλος'],
-        'Υπουργείο': res['Υπουργείο'],
-        'Κατάθεση': res['Ημερομηνία_κατάθεσης'].map(date_gr),
-    })
+    table = res[['Τίτλος', 'Υπουργείο', 'Κατάθεση']]
     st.caption('Κάντε κλικ σε μια γραμμή για να ανοίξει η κάρτα.')
     event = st.dataframe(table, hide_index=True, width='stretch', height=320,
                          on_select='rerun', selection_mode='single-row',

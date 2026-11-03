@@ -1,0 +1,6 @@
+# Για τα scripts εξαγωγής και αξιολόγησης (όχι για την εφαρμογή online):
+# extract_core.py, extract_cards.py, build_public.py, evaluation/*.py
+pandas
+pyarrow
+anthropic
+openpyxl

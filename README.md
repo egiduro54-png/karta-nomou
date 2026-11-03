@@ -184,8 +184,12 @@ API. Φιλοξενείται δωρεάν στο Streamlit Community Cloud, α�
 ```powershell
 git clone https://github.com/egiduro54-png/karta-nomou.git
 cd karta-nomou
-pip install -r requirements.txt
+pip install -r requirements.txt           # η εφαρμογή (streamlit, pandas, pyarrow)
+pip install -r requirements-extract.txt   # τα scripts εξαγωγής και αξιολόγησης (+ anthropic, openpyxl)
 ```
+Υπάρχουν δύο αρχεία βιβλιοθηκών. Το `requirements.txt` το διαβάζει το Streamlit Community
+Cloud, γι' αυτό περιέχει μόνο ό,τι χρειάζεται η εφαρμογή, με κλειδωμένη την έκδοση του
+Streamlit. Αν θέλετε μόνο να τρέξετε την εφαρμογή τοπικά, αρκεί το πρώτο.
 
 **2. Dataset.** Συνδεθείτε στο Hugging Face, αποδεχτείτε τους όρους στη
 [σελίδα του dataset](https://huggingface.co/datasets/glossAPI/hellenic-parliament-legislative-work)
@@ -295,4 +299,5 @@ streamlit run app.py                           # ανοίγει στο http://lo
 | [`cards.jsonl`](cards.jsonl) | Η ακατέργαστη έξοδος του μοντέλου |
 | [`evaluation/`](evaluation/) | Η χειροκίνητη αξιολόγηση των 20 καρτών |
 | [`docs/PROMPTS.md`](docs/PROMPTS.md) | Τα prompts προς τον coding agent |
-| [`requirements.txt`](requirements.txt) | Οι βιβλιοθήκες Python |
+| [`requirements.txt`](requirements.txt) | Οι βιβλιοθήκες της εφαρμογής (τις διαβάζει το Streamlit Cloud) |
+| [`requirements-extract.txt`](requirements-extract.txt) | Οι βιβλιοθήκες για τα scripts εξαγωγής και αξιολόγησης |

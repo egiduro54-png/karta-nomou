@@ -1,4 +1,3 @@
+streamlit==1.56.0
 pandas
 pyarrow
-anthropic
-streamlit
