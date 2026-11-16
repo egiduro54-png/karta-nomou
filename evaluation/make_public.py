@@ -4,7 +4,10 @@
 Το αντίγραφο κρατά βαθμούς, σχόλια, τεκμήρια και όλους τους τύπους.
 
 Χρήση:  python evaluation/make_public.py   -> evaluation/aksiologisi_public.xlsx
+        python evaluation/make_public.py --src evaluation/aksiologisi_v2.xlsx --out evaluation/aksiologisi_v2_public.xlsx
+Το αρχείο --src (με τους βαθμούς) μόνο διαβάζεται· δεν αλλάζει ποτέ.
 """
+import argparse
 import re
 import sys
 from pathlib import Path
@@ -39,7 +42,15 @@ def shift_letter(letter: str) -> str:
 
 
 def main():
-    wb = load_workbook(SRC)
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--src', default=str(SRC), help='βαθμολογημένο φύλλο (μόνο ανάγνωση)')
+    ap.add_argument('--out', default=str(OUT), help='δημόσιο αντίγραφο')
+    args = ap.parse_args()
+    src, out = Path(args.src).resolve(), Path(args.out).resolve()
+    if src == out:
+        sys.exit('Το --out δεν μπορεί να είναι το ίδιο με το --src (θα χάνονταν οι βαθμοί).')
+
+    wb = load_workbook(src)
     ws = wb[SHEET]
     assert ws.cell(1, GONE).value == 'Πρωτότυπο κείμενο', 'η στήλη δεν είναι εκεί που περιμέναμε'
     widths = {c: ws.column_dimensions[get_column_letter(c)].width for c in range(1, ws.max_column + 1)}
@@ -88,8 +99,8 @@ def main():
 
     assert all(ws.cell(1, c).value != 'Πρωτότυπο κείμενο' for c in range(1, ws.max_column + 1))
     assert ws.cell(1, C_FIELD).value == 'Πεδίο'
-    wb.save(OUT)
-    print(f'{OUT.name}: {ws.max_column} στήλες, {ws.max_row - 1} γραμμές, {fixed} τύποι διορθώθηκαν')
+    wb.save(out)
+    print(f'{out.name}: {ws.max_column} στήλες, {ws.max_row - 1} γραμμές, {fixed} τύποι διορθώθηκαν')
 
 
 if __name__ == '__main__':

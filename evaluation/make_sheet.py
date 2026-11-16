@@ -6,11 +6,14 @@
 
 ΠΡΟΣΟΧΗ: περιέχει κείμενο ΑΣΡ από το gated dataset -> το xlsx ΔΕΝ ανεβαίνει στο GitHub.
 
-Χρήση:  python evaluation/make_sheet.py
-ΠΡΟΣΟΧΗ: αντικαθιστά το aksiologisi.xlsx· μην το ξανατρέξετε αφού αρχίσετε να βαθμολογείτε.
+Χρήση:  python evaluation/make_sheet.py --cards cards_v2.jsonl --out evaluation/aksiologisi_v2.xlsx
+        (χωρίς ορίσματα: cards.jsonl -> evaluation/aksiologisi.xlsx)
+Δεν γράφει ποτέ πάνω σε αρχείο που υπάρχει ήδη (προστασία των βαθμών).
 """
+import argparse
 import json
 import re
+import sys
 import unicodedata
 from pathlib import Path
 
@@ -47,18 +50,46 @@ EXCEL_MAX = 32_767   # όριο χαρακτήρων ανά κελί στο Exce
 FIELDS = ['Ζήτημα', 'Ωφελούμενοι', 'Στόχοι', 'Κόστος']
 
 
-def sample_cards() -> pd.DataFrame:
-    with open(ROOT / 'cards.jsonl', encoding='utf-8') as f:
-        cards = pd.DataFrame([json.loads(l) for l in f if l.strip()])
-    meta = pd.read_parquet(ROOT / 'data' / 'cards_public.parquet',
-                           columns=['law_id', 'Τίτλος', 'Υπουργείο', 'Ανάλυση_Συνεπειών_Ρύθμισης'])
-    src = pd.read_parquet(ROOT / 'cores.parquet', columns=['law_id', 'core', 'cost'])
-    df = meta.merge(cards[['law_id', 'card']], on='law_id').merge(src, on='law_id', how='left')
+def read_cards(path: Path) -> pd.DataFrame:
+    with open(path, encoding='utf-8') as f:
+        return pd.DataFrame([json.loads(l) for l in f if l.strip()])
+
+
+def sample_ids(meta: pd.DataFrame) -> list:
+    """Οι 20 κάρτες του δείγματος. Η κλήρωση γίνεται ΠΑΝΤΑ στο αρχικό cards.jsonl,
+    ώστε μια νέα έκδοση καρτών (π.χ. cards_v2.jsonl) να αξιολογείται στα ίδια νομοσχέδια."""
+    df = meta.merge(read_cards(ROOT / 'cards.jsonl')[['law_id']], on='law_id')
     df = df.sort_values('law_id').sample(frac=1, random_state=SEED).reset_index(drop=True)
     # ποικιλία: πρώτα μία κάρτα από κάθε υπουργείο, με τη σειρά της τυχαίας ανακατάταξης
     df['_round'] = df.groupby('Υπουργείο').cumcount()
     df['_order'] = range(len(df))
-    return df.sort_values(['_round', '_order']).head(N).reset_index(drop=True)
+    return df.sort_values(['_round', '_order']).head(N)['law_id'].tolist()
+
+
+def graded_ids(path: Path) -> list:
+    """Η σειρά των law_id στο ήδη βαθμολογημένο φύλλο (μία ανά κάρτα, στη γραμμή «Ζήτημα»)."""
+    from openpyxl import load_workbook
+    ws = load_workbook(path, read_only=True)[SHEET]
+    head = [c.value for c in next(ws.iter_rows(max_row=1))]
+    f, i = head.index('Πεδίο'), head.index('law_id')
+    return [r[i] for r in ws.iter_rows(min_row=2, values_only=True) if r[f] == 'Ζήτημα']
+
+
+def sample_cards(cards_path: Path = ROOT / 'cards.jsonl') -> pd.DataFrame:
+    meta = pd.read_parquet(ROOT / 'data' / 'cards_public.parquet',
+                           columns=['law_id', 'Τίτλος', 'Υπουργείο', 'Ανάλυση_Συνεπειών_Ρύθμισης'])
+    ids = sample_ids(meta)
+    if OUT.exists() and graded_ids(OUT) != ids:
+        sys.exit(f'Η κλήρωση δεν δίνει τη σειρά καρτών του {OUT.name}· σταματώ.')
+    cards = read_cards(cards_path).drop_duplicates('law_id', keep='last')
+    missing = [i for i in ids if i not in set(cards['law_id'])]
+    if missing:
+        sys.exit(f'Λείπουν {len(missing)} κάρτες του δείγματος από το {cards_path.name}: ' + ','.join(missing))
+    src = pd.read_parquet(ROOT / 'cores.parquet', columns=['law_id', 'core', 'cost'])
+    # how='left' με αριστερά τη λίστα ids: κρατά ακριβώς τη σειρά του δείγματος
+    return (pd.DataFrame({'law_id': ids}).merge(meta, on='law_id', how='left')
+            .merge(cards[['law_id', 'card']], on='law_id', how='left')
+            .merge(src, on='law_id', how='left'))
 
 
 def numbered(items, key):
@@ -427,7 +458,15 @@ def build_results(ws, last):
 
 
 def main():
-    df = sample_cards()
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--cards', default='cards.jsonl', help='αρχείο καρτών (π.χ. cards_v2.jsonl)')
+    ap.add_argument('--out', default=str(OUT.relative_to(ROOT)), help='αρχείο εξόδου .xlsx')
+    args = ap.parse_args()
+    out = ROOT / args.out
+    if out.exists():   # ποτέ πάνω σε φύλλο που μπορεί να έχει βαθμούς
+        sys.exit(f'Το {args.out} υπάρχει ήδη· δεν το αντικαθιστώ. Δώστε άλλο --out.')
+
+    df = sample_cards(ROOT / args.cards)
     wb = Workbook()
     ws = wb.active
     ws.title = SHEET
@@ -435,9 +474,15 @@ def main():
     build_guide(wb.create_sheet('Οδηγίες'))
     build_results(wb.create_sheet('Αποτελέσματα'), last)
     checks = build_autocheck(wb.create_sheet('Αυτόματος έλεγχος'), df)
-    OUT.parent.mkdir(exist_ok=True)
-    wb.save(OUT)
-    print(f'{len(df)} κάρτες, {last - 1} γραμμές -> {OUT.relative_to(ROOT)}')
+    # ίδια διάταξη με το βαθμολογημένο φύλλο: «Πόσα λείπουν», «Ανάλυση λαθών», νέοι πίνακες
+    import deepen_eval
+    deepen_eval.add_howmany(ws)
+    deepen_eval.add_error_sheet(wb)
+    deepen_eval.add_results(wb['Αποτελέσματα'], last)
+    deepen_eval.add_guide(wb['Οδηγίες'])
+    out.parent.mkdir(exist_ok=True)
+    wb.save(out)
+    print(f'{len(df)} κάρτες ({args.cards}), {last - 1} γραμμές -> {args.out}')
     print('υπουργεία:', df['Υπουργείο'].nunique())
     for f in FIELDS:
         n = [c for c in checks if c[1] == f]

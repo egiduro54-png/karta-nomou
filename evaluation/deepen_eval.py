@@ -124,7 +124,7 @@ def add_results(ws, last):
     MISS = rng(get_column_letter(C_MISS))
     E_KIND, E_TYPE = f"'{ERR}'!$D$2:$D${ERR_LAST}", f"'{ERR}'!$E$2:$E${ERR_LAST}"
 
-    # δίπλα στο 92,1% (γραμμή 17)
+    # δίπλα στο συνολικό ποσοστό χωρίς ελλείψεις (γραμμή 17)
     for ref, h in (('G16', 'Στοιχεία που λείπουν'), ('H16', '% σωστά (με όσα λείπουν)')):
         cell(ws, ref, h, bold=True, fill=SUB_FILL, align=Alignment(horizontal='center',
                                                                   vertical='center', wrap_text=True))
@@ -204,7 +204,7 @@ def add_guide(ws):
                           'αυτού που λείπει), είδος, τύπος λάθους από τη λίστα, σχόλιο.'),
         ('Τύποι λάθους', '\n'.join(f'• {t}' for t in TYPES)),
         ('Νέο ποσοστό', 'Στο φύλλο «Αποτελέσματα»: σωστά / (όσα έδωσε το LLM + όσα λείπουν). '
-                        'Μετρά και τις παραλείψεις, άρα είναι αυστηρότερο από το 92,1%.'),
+                        'Μετρά και τις παραλείψεις, άρα είναι αυστηρότερο από το ποσοστό χωρίς ελλείψεις.'),
     ]
     for i, (a, b) in enumerate(rows, start):
         ca, cb = ws.cell(i, 1, a), ws.cell(i, 2, b)
